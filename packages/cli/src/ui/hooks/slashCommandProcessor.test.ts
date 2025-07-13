@@ -42,11 +42,27 @@ vi.mock('node:process', () => ({
   })),
 }));
 
-vi.mock('node:fs/promises', () => ({
+const fsPromisesMock = vi.hoisted(() => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
   mkdir: vi.fn(),
+  realpath: vi.fn((p) => Promise.resolve(p)),
 }));
+
+vi.mock('node:fs/promises', () => fsPromisesMock);
+
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+
+  return {
+    ...actual,
+    promises: fsPromisesMock,
+    default: {
+      ...actual,
+      promises: fsPromisesMock,
+    },
+  };
+});
 
 const mockGetCliVersionFn = vi.fn(() => Promise.resolve('0.1.0'));
 vi.mock('../../utils/version.js', () => ({
@@ -1485,7 +1501,7 @@ describe('useSlashCommandProcessor', () => {
           /gemini-conversation-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.md$/,
         ),
         expect.stringContaining('# Gemini CLI Conversation Export'),
-        'utf-8',
+        expect.objectContaining({ encoding: 'utf-8' }),
       );
       expect(mockAddItem).toHaveBeenNthCalledWith(
         2, // Second call should be the success message
@@ -1542,7 +1558,7 @@ describe('useSlashCommandProcessor', () => {
       expect(mockWriteFile).toHaveBeenCalledWith(
         expect.stringMatching(/my-conversation\.md$/),
         expect.stringContaining('# Gemini CLI Conversation Export'),
-        'utf-8',
+        expect.objectContaining({ encoding: 'utf-8' }),
       );
       expect(commandResult).toEqual({ type: 'handled' });
     });
@@ -1591,7 +1607,7 @@ describe('useSlashCommandProcessor', () => {
       expect(mockWriteFile).toHaveBeenCalledWith(
         expect.anything(),
         expect.stringContaining('| **Sandbox Environment** | docker |'),
-        'utf-8',
+        expect.objectContaining({ encoding: 'utf-8' }),
       );
 
       // Test sandbox-exec
@@ -1608,7 +1624,7 @@ describe('useSlashCommandProcessor', () => {
         expect.stringContaining(
           '| **Sandbox Environment** | sandbox-exec (restrictive) |',
         ),
-        'utf-8',
+        expect.objectContaining({ encoding: 'utf-8' }),
       );
     });
 
@@ -1773,7 +1789,7 @@ describe('useSlashCommandProcessor', () => {
         expect.objectContaining({
           type: MessageType.ERROR,
           text: expect.stringContaining(
-            '❌ Failed to export conversation: Permission denied',
+            'Failed to export conversation: Permission denied',
           ),
         }),
         expect.any(Number),
@@ -1793,7 +1809,7 @@ describe('useSlashCommandProcessor', () => {
       expect(mockWriteFile).toHaveBeenCalledWith(
         expect.stringMatching(/test-export\.md$/),
         expect.any(String),
-        'utf-8',
+        expect.objectContaining({ encoding: 'utf-8' }),
       );
 
       // Verify the exported content has required structural elements
@@ -1839,7 +1855,7 @@ describe('useSlashCommandProcessor', () => {
       // Test various path traversal attempts
       const pathTraversalAttempts = [
         '../../malicious.md',
-        '../../../etc/passwd',
+        '../../../etc/passwd.md',
         '/tmp/malicious.md',
         '../outside.md',
       ];
@@ -1931,7 +1947,7 @@ describe('useSlashCommandProcessor', () => {
         expect(mockWriteFile).toHaveBeenCalledWith(
           expect.stringContaining(legitimatePath),
           expect.stringContaining('# Gemini CLI Conversation Export'),
-          'utf-8',
+          expect.objectContaining({ encoding: 'utf-8' }),
         );
 
         // Should show success message

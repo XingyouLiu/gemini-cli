@@ -830,44 +830,75 @@ export const useSlashCommandProcessor = (
         description:
           'Export conversation history to markdown file. Usage: /export [filename]',
         action: async (_mainCommand, _subCommand, args) => {
+          const timestamp = new Date()
+            .toISOString()
+            .slice(0, 19)
+            .replace(/:/g, '-');
+          const userFilename = [_subCommand, args]
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+          const filename =
+            userFilename || `gemini-conversation-${timestamp}.md`;
+
           try {
-            // Dynamic imports at the top to avoid runtime errors
-            const fs = await import('fs/promises');
-            const path = await import('path');
-            
-            const timestamp = new Date()
-              .toISOString()
-              .slice(0, 19)
-              .replace(/:/g, '-');
-            const userFilename = [_subCommand, args]
-              .filter(Boolean)
-              .join(' ')
-              .trim();
-            const filename =
-              userFilename || `gemini-conversation-${timestamp}.md`;
-      
+            // Prevent null byte injection
+            if (filename.includes('\0')) {
+              addMessage({
+                type: MessageType.ERROR,
+                content: 'Invalid filename: Null bytes are not allowed.',
+                timestamp: new Date(),
+              });
+              return;
+            }
+
             // Validate filename
             const basename = path.basename(filename);
             if (basename.length > 255) {
               addMessage({
                 type: MessageType.ERROR,
-                content: 'Filename too long. Please use a shorter filename (max 255 characters).',
+                content:
+                  'Filename too long. Please use a shorter filename (max 255 characters).',
                 timestamp: new Date(),
               });
               return;
             }
-      
+
             if (!/^[\w\-. ]+\.md$/i.test(basename)) {
               addMessage({
                 type: MessageType.ERROR,
-                content: 'Invalid filename. Please use only letters, numbers, spaces, hyphens, underscores, and dots. File must end with .md',
+                content:
+                  'Invalid filename. Please use only letters, numbers, spaces, hyphens, underscores, and dots. File must end with .md',
                 timestamp: new Date(),
               });
               return;
             }
-      
+
             // Windows reserved filenames
-            const reservedNames = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'];
+            const reservedNames = [
+              'CON',
+              'PRN',
+              'AUX',
+              'NUL',
+              'COM1',
+              'COM2',
+              'COM3',
+              'COM4',
+              'COM5',
+              'COM6',
+              'COM7',
+              'COM8',
+              'COM9',
+              'LPT1',
+              'LPT2',
+              'LPT3',
+              'LPT4',
+              'LPT5',
+              'LPT6',
+              'LPT7',
+              'LPT8',
+              'LPT9',
+            ];
             const nameWithoutExt = basename.slice(0, -3).toUpperCase();
             if (reservedNames.includes(nameWithoutExt)) {
               addMessage({
@@ -877,14 +908,14 @@ export const useSlashCommandProcessor = (
               });
               return;
             }
-      
+
             let sandboxEnv = 'no sandbox';
             if (process.env.SANDBOX && process.env.SANDBOX !== 'sandbox-exec') {
               sandboxEnv = process.env.SANDBOX;
             } else if (process.env.SANDBOX === 'sandbox-exec') {
               sandboxEnv = `sandbox-exec (${process.env.SEATBELT_PROFILE || 'unknown'})`;
             }
-      
+
             const sessionInfo = {
               exportTime: new Date().toISOString(),
               cliVersion: await getCliVersion(),
@@ -897,17 +928,17 @@ export const useSlashCommandProcessor = (
               memoryUsage: formatMemoryUsage(process.memoryUsage().rss),
               sandboxEnv,
             };
-      
+
             const { sessionStartTime, metrics } = session.stats;
             const wallDuration =
               new Date().getTime() - sessionStartTime.getTime();
-      
+
             const sessionStats = {
               sessionStartTime: sessionStartTime.toISOString(),
               wallDuration: formatDuration(wallDuration),
               metrics,
             };
-      
+
             let coreHistory: Content[] = [];
             try {
               const chat = config?.getGeminiClient()?.getChat();
@@ -916,7 +947,8 @@ export const useSlashCommandProcessor = (
               }
             } catch (error) {
               const sessionId = config?.getSessionId() || 'unknown';
-              const errorMessage = error instanceof Error ? error.message : String(error);
+              const errorMessage =
+                error instanceof Error ? error.message : String(error);
               console.warn(
                 `Could not retrieve core conversation history: ${errorMessage}`,
                 {
@@ -927,7 +959,7 @@ export const useSlashCommandProcessor = (
                 },
               );
             }
-      
+
             const exportData: ExportData = {
               metadata: {
                 exportInfo: sessionInfo,
@@ -938,27 +970,27 @@ export const useSlashCommandProcessor = (
               uiHistory: history,
               coreHistory,
             };
-      
+
             const markdownContent = generateComprehensiveMarkdown(exportData);
-      
+
             const cwd = process.cwd();
             const outputPath = path.resolve(cwd, filename);
-      
+
             // Path traversal prevention
             // Note: This validation has a theoretical TOCTOU (Time-of-Check to Time-of-Use) race condition
             // where an attacker could modify the filesystem between our check and the write operation.
             // However, Node.js does not provide APIs to atomically validate and write to a path using
             // file descriptors. Given the CLI context and the use of 'wx' flag to prevent overwrites,
-            // this represents an acceptable security trade-off. 
+            // this represents an acceptable security trade-off.
             let finalOutputPath: string;
             let realOutputDir: string;
             const realCwd = await fs.realpath(cwd);
-            
+
             try {
               const outputDir = path.dirname(outputPath);
               await fs.mkdir(outputDir, { recursive: true });
               realOutputDir = await fs.realpath(outputDir);
-      
+
               if (
                 !realOutputDir.startsWith(realCwd + path.sep) &&
                 realOutputDir !== realCwd
@@ -970,12 +1002,12 @@ export const useSlashCommandProcessor = (
                 });
                 return;
               }
-      
+
               finalOutputPath = path.join(
                 realOutputDir,
                 path.basename(outputPath),
               );
-              
+
               if (
                 !finalOutputPath.startsWith(realCwd + path.sep) &&
                 finalOutputPath !== realCwd
@@ -988,14 +1020,20 @@ export const useSlashCommandProcessor = (
                 return;
               }
             } catch (verifyError) {
-              console.error('[EXPORT AUDIT]', JSON.stringify({
-                event: 'PATH_VERIFICATION_FAILED',
-                intendedPath: outputPath,
-                error: verifyError instanceof Error ? verifyError.message : String(verifyError),
-                timestamp: new Date().toISOString(),
-                sessionId: config?.getSessionId() || 'unknown',
-              }));
-              
+              console.error(
+                '[EXPORT AUDIT]',
+                JSON.stringify({
+                  event: 'PATH_VERIFICATION_FAILED',
+                  intendedPath: outputPath,
+                  error:
+                    verifyError instanceof Error
+                      ? verifyError.message
+                      : String(verifyError),
+                  timestamp: new Date().toISOString(),
+                  sessionId: config?.getSessionId() || 'unknown',
+                }),
+              );
+
               addMessage({
                 type: MessageType.ERROR,
                 content: `Security error: Could not verify path safety before writing.\nExample: /export exports/my-session.md`,
@@ -1003,22 +1041,25 @@ export const useSlashCommandProcessor = (
               });
               return;
             }
-      
+
             await fs.writeFile(finalOutputPath, markdownContent, {
               encoding: 'utf-8',
               flag: 'wx',
             });
-      
+
             if (config?.getSessionId()) {
-              console.log('[EXPORT AUDIT]', JSON.stringify({
-                event: 'EXPORT_SUCCESS',
-                path: finalOutputPath,
-                size: markdownContent.length,
-                timestamp: new Date().toISOString(),
-                sessionId: config.getSessionId(),
-              }));
+              console.log(
+                '[EXPORT AUDIT]',
+                JSON.stringify({
+                  event: 'EXPORT_SUCCESS',
+                  path: finalOutputPath,
+                  size: markdownContent.length,
+                  timestamp: new Date().toISOString(),
+                  sessionId: config.getSessionId(),
+                }),
+              );
             }
-      
+
             addMessage({
               type: MessageType.INFO,
               content: `Conversation exported successfully!\nFile: ${finalOutputPath}\nItems exported: ${history.length} UI items, ${coreHistory.length} core items\nFile size: ${Math.round(
@@ -1027,20 +1068,19 @@ export const useSlashCommandProcessor = (
               timestamp: new Date(),
             });
           } catch (error) {
+            const isNodeError = (err: unknown): err is NodeJS.ErrnoException =>
+              err instanceof Error && 'code' in err;
+
             const errorEvent = {
               event: 'EXPORT_FAILED',
               filename,
               error: error instanceof Error ? error.message : String(error),
-              errorCode: (error as any).code || 'UNKNOWN',
+              errorCode: isNodeError(error) ? error.code : 'UNKNOWN',
               timestamp: new Date().toISOString(),
               sessionId: config?.getSessionId() || 'unknown',
             };
             console.error('[EXPORT AUDIT]', JSON.stringify(errorEvent));
-      
-            const isNodeError = (err: unknown): err is NodeJS.ErrnoException => {
-              return err instanceof Error && 'code' in err;
-            };
-      
+
             if (isNodeError(error) && error.code === 'EEXIST') {
               addMessage({
                 type: MessageType.ERROR,
@@ -1056,7 +1096,8 @@ export const useSlashCommandProcessor = (
             } else if (isNodeError(error) && error.code === 'ENOSPC') {
               addMessage({
                 type: MessageType.ERROR,
-                content: 'No space left on device. Please free up some disk space and try again.',
+                content:
+                  'No space left on device. Please free up some disk space and try again.',
                 timestamp: new Date(),
               });
             } else {
